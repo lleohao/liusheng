@@ -4,7 +4,7 @@
 
 [中文文档](README.zh-CN.md) · [MIT License](LICENSE)
 
-Open the web page on your phone, dictate with your phone keyboard, and send the recognized text to the focused input on **Niri/Wayland Linux or macOS**. The server uses the desktop clipboard and simulated keyboard shortcuts. No Python packages, browser microphone access, or native phone app are required.
+Open the web page on your phone, dictate with your phone keyboard, and send the recognized text to the focused input on **Niri/Wayland Linux or macOS**. The server uses the desktop clipboard and simulated keyboard shortcuts. No browser microphone access or native phone app is required.
 
 ## Features
 
@@ -42,10 +42,18 @@ sudo pacman -S --needed python wl-clipboard wtype
 sudo dnf install python3 wl-clipboard wtype
 
 # Debian / Ubuntu, if the packages are available
-sudo apt install python3 wl-clipboard wtype
+sudo apt install python3 python3-venv wl-clipboard wtype
 ```
 
 On macOS, install Python 3 if needed (for example, `brew install python` if you already use Homebrew). No `pip` dependencies or Linux input tools are required.
+
+The recommended `run.sh` launcher creates `.venv` and installs the QR renderer from `requirements.txt`. For a manual start, install it into the Python environment that runs the server:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+When `qrcode` is installed, startup prints the phone URL and its QR code automatically. If the package is missing, the server silently skips the QR code and still prints the URL normally.
 
 ### 2. Start the server on the target computer
 
@@ -53,16 +61,20 @@ Download or clone this repository, then run from a terminal inside your desktop 
 
 ```bash
 cd niri-voice-input
-python3 server.py
+./run.sh
 ```
+
+The launcher creates or reuses `.venv`, installs current dependencies, and starts `server.py`. Extra arguments are forwarded, for example `./run.sh --port 9000`.
 
 On Linux, the terminal must inherit `WAYLAND_DISPLAY` and `NIRI_SOCKET`. On macOS, start from a terminal app you can authorize, such as Terminal or iTerm2; complete the permissions steps below.
 
-The default address is `0.0.0.0:8765`. Find your computer's LAN IP with `hostname -I` on Linux, or in **System Settings → Network** on macOS. Connect your phone to the same trusted network and open:
+The default address is `0.0.0.0:8765`. At startup, the server detects the IPv4 address selected by the computer's default network route and prints a ready-to-open phone URL. If `qrcode` is installed, it also prints a QR code automatically. Connect your phone to the same trusted network and open the URL or scan the code:
 
 ```text
-http://<computer-lan-ip>:8765
+手机访问： http://192.168.x.x:8765
 ```
+
+If automatic detection fails, startup continues and the console tells you how to find the address manually. A VPN or unusual routing setup may cause the detected address to differ from the Wi-Fi or Ethernet address your phone can reach.
 
 ### 3. Use it
 
@@ -135,6 +147,7 @@ After an initial online visit in a secure context, the page and icons are cached
 ## Troubleshooting and limits
 
 - **Cannot open the page:** check the LAN IP, network isolation, port, and desktop firewall. Allow incoming access only on your trusted network.
+- **`run.sh` reports that pip is missing:** on Debian or Ubuntu, install the virtual-environment support with `sudo apt install python3-venv`, then run `./run.sh` again. The launcher will repair the incomplete `.venv` automatically.
 - **Missing components:** Linux: `command -v wl-copy wtype`; macOS: `command -v python3 pbcopy osascript`.
 - **macOS permission error:** follow the steps above. Authorization must apply to the app that actually launches the server.
 - **Sent but no text:** delivery means commands ran, not that the destination accepted them. Check focus and the app's paste shortcuts. Secure or non-editable fields may reject simulated input.
@@ -147,7 +160,7 @@ After an initial online visit in a secure context, the page and icons are cached
 
 ## Development
 
-The server uses only the Python standard library. Node.js is needed only for service-worker tests.
+The core server uses only the Python standard library. The optional `qrcode` package renders the startup QR code; Node.js is needed only for service-worker tests.
 
 ```bash
 python3 -m unittest -v

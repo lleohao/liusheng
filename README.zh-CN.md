@@ -4,7 +4,7 @@
 
 [English](README.md) · [MIT 许可证](LICENSE)
 
-手机打开网页，用手机输入法进行语音转写，再将文字发送到 **Niri/Wayland Linux 或 macOS** 当前聚焦的输入框。服务通过电脑剪贴板和模拟快捷键完成输入，无需安装 Python 第三方包、使用浏览器麦克风或安装手机原生 App。
+手机打开网页，用手机输入法进行语音转写，再将文字发送到 **Niri/Wayland Linux 或 macOS** 当前聚焦的输入框。服务通过电脑剪贴板和模拟快捷键完成输入，无需使用浏览器麦克风或安装手机原生 App。
 
 ## 功能
 
@@ -42,10 +42,18 @@ sudo pacman -S --needed python wl-clipboard wtype
 sudo dnf install python3 wl-clipboard wtype
 
 # Debian / Ubuntu，取决于软件源是否提供
-sudo apt install python3 wl-clipboard wtype
+sudo apt install python3 python3-venv wl-clipboard wtype
 ```
 
 macOS 只需安装 Python 3；已使用 Homebrew 时可执行 `brew install python`。不需要安装 Linux 输入工具或执行 `pip install`。
+
+推荐使用的 `run.sh` 启动脚本会自动创建 `.venv`，并从 `requirements.txt` 安装二维码组件。手动启动时，可在运行服务的 Python 环境中安装该组件：
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+安装 `qrcode` 后，服务启动时会自动打印手机访问 URL 及其二维码。未安装时会静默跳过二维码，仍正常启动并打印 URL。
 
 ### 2. 在目标电脑启动服务
 
@@ -53,16 +61,20 @@ macOS 只需安装 Python 3；已使用 Homebrew 时可执行 `brew install pyth
 
 ```bash
 cd niri-voice-input
-python3 server.py
+./run.sh
 ```
+
+该脚本会创建或复用 `.venv`、安装当前依赖，并启动 `server.py`。其他参数会继续传递，例如 `./run.sh --port 9000`。
 
 Linux 终端需要继承 `WAYLAND_DISPLAY`、`NIRI_SOCKET` 等会话变量。macOS 请先从 Terminal 或 iTerm2 等可授权的终端启动，并完成下方权限配置。
 
-默认监听 `0.0.0.0:8765`。Linux 使用 `hostname -I` 查看局域网 IP；macOS 在「系统设置 → 网络」中查看。手机和电脑连接同一可信网络，手机浏览器访问：
+默认监听 `0.0.0.0:8765`。服务启动时会自动检测电脑默认网络路由所使用的 IPv4 地址，并在终端打印可直接访问的手机 URL；已安装 `qrcode` 时还会自动打印二维码。手机和电脑连接同一可信网络，在手机浏览器打开该地址或扫描二维码：
 
 ```text
-http://电脑局域网IP:8765
+手机访问： http://192.168.x.x:8765
 ```
+
+自动检测失败时服务仍会正常启动，终端会提示如何手动查询地址。使用 VPN 或特殊路由配置时，检测结果可能不是手机能够访问的 Wi-Fi 或有线网络地址。
 
 ### 3. 输入和发送
 
@@ -135,6 +147,7 @@ systemctl --user disable --now niri-voice-input.service
 ## 排错与限制
 
 - **网页打不开**：检查局域网 IP、网络隔离、端口和电脑防火墙，只允许可信网络访问。
+- **`run.sh` 提示缺少 pip**：Debian 或 Ubuntu 请执行 `sudo apt install python3-venv`，然后重新运行 `./run.sh`；启动脚本会自动修复未完成的 `.venv`。
 - **缺少组件**：Linux 执行 `command -v wl-copy wtype`；macOS 执行 `command -v python3 pbcopy osascript`。
 - **macOS 权限错误**：按照上方步骤授权，权限需要对应实际启动服务的应用。
 - **显示成功但没有文字**：成功只表示命令执行完毕，不代表目标应用接受了输入。请检查焦点和粘贴快捷键；安全输入框或不可编辑控件可能拒绝模拟输入。
@@ -147,7 +160,7 @@ systemctl --user disable --now niri-voice-input.service
 
 ## 开发与测试
 
-服务端仅使用 Python 标准库，Node.js 只用于 Service Worker 测试。
+核心服务仅使用 Python 标准库；可选的 `qrcode` 包用于打印启动二维码，Node.js 只用于 Service Worker 测试。
 
 ```bash
 python3 -m unittest -v

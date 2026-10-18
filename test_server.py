@@ -1,14 +1,126 @@
 import http.client
+import io
 import json
 import subprocess
 import struct
 import sys
 import threading
 import time
+import types
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 
 import server
+from util import lan_address
+from util import terminal_qr
+
+
+class NetworkAddressTests(unittest.TestCase):
+    def test_route_selected_address_is_returned_and_socket_is_closed(self):
+        with patch.object(lan_address.socket, 'socket') as make_socket:
+            probe = make_socket.return_value
+            probe.getsockname.return_value = ('192.168.10.42', 49152)
+            self.assertEqual(lan_address.lan_ipv4_address(), '192.168.10.42')
+        make_socket.assert_called_once_with(
+            lan_address.socket.AF_INET, lan_address.socket.SOCK_DGRAM)
+        probe.connect.assert_called_once_with(('192.0.2.1', 80))
+        probe.close.assert_called_once_with()
+
+    def test_hostname_fallback_skips_unusable_addresses(self):
+        with patch.object(lan_address.socket, 'socket') as make_socket, \
+             patch.object(lan_address.socket, 'gethostname', return_value='desktop'), \
+             patch.object(
+                 lan_address.socket, 'gethostbyname_ex',
+                 return_value=('desktop', [], ['0.0.0.0', '127.0.0.1', '10.0.0.24']),
+             ) as resolve:
+            make_socket.return_value.connect.side_effect = OSError('no route')
+            self.assertEqual(lan_address.lan_ipv4_address(), '10.0.0.24')
+        resolve.assert_called_once_with('desktop')
+        make_socket.return_value.close.assert_called_once_with()
+
+    def test_unusable_or_failed_results_return_none(self):
+        cases = [
+            ('127.0.0.1', ['0.0.0.0', '127.0.0.1']),
+            ('0.0.0.0', []),
+        ]
+        for route_address, fallback_addresses in cases:
+            with self.subTest(route_address=route_address), \
+                 patch.object(lan_address.socket, 'socket') as make_socket, \
+                 patch.object(lan_address.socket, 'gethostname', return_value='desktop'), \
+                 patch.object(
+                     lan_address.socket, 'gethostbyname_ex',
+                     return_value=('desktop', [], fallback_addresses),
+                 ):
+                make_socket.return_value.getsockname.return_value = (route_address, 49152)
+                self.assertIsNone(lan_address.lan_ipv4_address())
+        with patch.object(
+                 lan_address.socket, 'socket', side_effect=OSError('unavailable')), \
+             patch.object(
+                 lan_address.socket, 'gethostname', side_effect=OSError('unavailable')):
+            self.assertIsNone(lan_address.lan_ipv4_address())
+
+    def render_banner(self, host, detected='192.168.1.25', qr_available=True):
+        output = io.StringIO()
+        with patch.object(server, 'lan_ipv4_address', return_value=detected) as detect, \
+             patch.object(
+                 server, 'print_terminal_qr', return_value=qr_available) as print_qr, \
+             patch.object(server, 'get_backend', return_value='wtype'), \
+             redirect_stdout(output):
+            server.print_startup_banner(host, 8765, 'auto')
+        return output.getvalue(), detect, print_qr
+
+    def test_banner_advertises_detected_or_explicit_address(self):
+        output, detect, print_qr = self.render_banner('0.0.0.0')
+        self.assertIn('手机访问： http://192.168.1.25:8765', output)
+        detect.assert_called_once_with()
+        print_qr.assert_called_once_with('http://192.168.1.25:8765')
+
+        output, detect, print_qr = self.render_banner('10.0.0.8')
+        self.assertIn('流声 Liusheng 已启动： http://10.0.0.8:8765', output)
+        self.assertIn('手机访问： http://10.0.0.8:8765', output)
+        detect.assert_not_called()
+        print_qr.assert_called_once_with('http://10.0.0.8:8765')
+
+    def test_banner_handles_loopback_and_detection_failure(self):
+        for host in ('127.0.0.1', 'localhost'):
+            with self.subTest(host=host):
+                output, detect, print_qr = self.render_banner(host)
+                self.assertIn(f'手机访问： 不可用（服务仅监听 {host}）', output)
+                detect.assert_not_called()
+                print_qr.assert_not_called()
+
+        output, detect, print_qr = self.render_banner('0.0.0.0', detected=None)
+        self.assertIn('未检测到局域网地址', output)
+        self.assertIn('hostname -I', output)
+        detect.assert_called_once_with()
+        print_qr.assert_not_called()
+
+    def test_banner_silently_skips_unavailable_qr_renderer(self):
+        output, _, print_qr = self.render_banner('0.0.0.0', qr_available=False)
+        self.assertNotIn('手机扫码', output)
+        self.assertNotIn('二维码不可用', output)
+        print_qr.assert_called_once_with('http://192.168.1.25:8765')
+
+
+class TerminalQrTests(unittest.TestCase):
+    def test_qr_uses_terminal_mode_only_for_a_tty(self):
+        qr = unittest.mock.Mock()
+        module = types.SimpleNamespace(
+            QRCode=unittest.mock.Mock(return_value=qr),
+            constants=types.SimpleNamespace(ERROR_CORRECT_M=0),
+            exceptions=types.SimpleNamespace(DataOverflowError=RuntimeError),
+        )
+        output = io.StringIO()
+        with patch.dict(sys.modules, {'qrcode': module}):
+            self.assertTrue(terminal_qr.print_terminal_qr('http://10.0.0.8:8765', output))
+        module.QRCode.assert_called_once_with(error_correction=0, border=4)
+        qr.add_data.assert_called_once_with('http://10.0.0.8:8765')
+        qr.print_ascii.assert_called_once_with(out=output, tty=False)
+
+    def test_missing_qr_package_is_nonfatal(self):
+        with patch.dict(sys.modules, {'qrcode': None}):
+            self.assertFalse(terminal_qr.print_terminal_qr('http://10.0.0.8:8765'))
 
 
 class DeliveryTests(unittest.TestCase):

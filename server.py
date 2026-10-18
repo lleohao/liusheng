@@ -14,6 +14,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from util.lan_address import is_loopback_host, lan_ipv4_address
+from util.terminal_qr import print_terminal_qr
+
 ROOT = Path(__file__).resolve().parent
 STATIC_FILES = {
     "/": ("index.html", "text/html; charset=utf-8"),
@@ -290,6 +293,32 @@ class Handler(BaseHTTPRequestHandler):
             super().log_message(fmt, *args)
 
 
+def print_startup_banner(host, port, backend):
+    startup_host = "127.0.0.1" if host == "0.0.0.0" else host
+    print(f"\n流声 Liusheng 已启动： http://{startup_host}:{port}", flush=True)
+    phone_url = None
+    if host == "0.0.0.0":
+        address = lan_ipv4_address()
+        if address:
+            phone_url = f"http://{address}:{port}"
+            print(f"手机访问： {phone_url}", flush=True)
+        else:
+            print(
+                "手机访问： 未检测到局域网地址；macOS 请在系统设置 → 网络查看，"
+                "Linux 请使用 hostname -I",
+                flush=True,
+            )
+    elif is_loopback_host(host):
+        print(f"手机访问： 不可用（服务仅监听 {host}）", flush=True)
+    else:
+        phone_url = f"http://{host}:{port}"
+        print(f"手机访问： {phone_url}", flush=True)
+    if phone_url:
+        print_terminal_qr(phone_url)
+    print(f"输入后端：{get_backend(backend) or missing_backend_message()}", flush=True)
+    print("在桌面登录会话的终端中运行；macOS 需辅助功能及自动化权限；Ctrl+C 停止。\n", flush=True)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Liusheng: phone -> focused input on Linux/macOS")
     parser.add_argument("--port", type=int, default=8765)
@@ -298,11 +327,7 @@ def main():
     args = parser.parse_args()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     server.backend = args.backend
-    print(f"\n流声 Liusheng 已启动： http://127.0.0.1:{args.port}", flush=True)
-    print(f"手机访问： http://<Linux局域网IP>:{args.port}", flush=True)
-    print("查看本机 IP：macOS 在系统设置 → 网络查看；Linux 使用 hostname -I", flush=True)
-    print(f"输入后端：{get_backend(args.backend) or missing_backend_message()}", flush=True)
-    print("在桌面登录会话的终端中运行；macOS 需辅助功能及自动化权限；Ctrl+C 停止。\n", flush=True)
+    print_startup_banner(args.host, server.server_port, args.backend)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
